@@ -1,0 +1,195 @@
+import re
+import time
+
+import pandas as pd
+import numpy as np
+import xlsxwriter
+import os
+import traceback
+
+
+class DataInitiate():  #initiate declare core variables
+    def __init__(self, INPUT):
+        '''INPUT =  input("Enter the file path").strip().strip("'").strip('"')
+        self.data_file = pd.read_csv(INPUT, skiprows=13 )
+        print(self.data_file)'''
+
+        try:
+            self.data_file = pd.read_csv(INPUT, on_bad_lines='skip',  skiprows=13)  # read local file, skipping starting 13 rows and skip bad rows
+
+            self.data_column_map = {'Panel_ID':'PID', 'supplier': 'Supplier Name', 'status': 'Status',
+                                    'term_reason': 'Term Reason', 'Country': 'Country Code'}  # map a list of data columns : data names
+
+            self.column_value_replace = {'ADHOC_8223': 'Employee size', 'BUSINESS_521': 'Employee size',
+                                         'BUSINESS_6785': 'Department'
+                , 'CORE_BUSINESS_0002': 'Employee size', 'EMPLOYMENT': 'Employment(FTEs)', 'Group NA': 'Incomplete',
+                                         'INDUSTRY': 'Industry', 'JOB_TITLE': 'Job Tile',
+                                         'OE Validation': 'OE Validation', 'recaptcha': 'recaptcha', 'REGION': 'Region',
+                                         'Selected threat potential at joblevel not allow the survey': 'Security threat score',
+                                         'This survey failed due to Internet fraudster detected': 'Security threat score',
+                                         'Unique IP': 'Unique IP',
+                                         'Unique PID': 'Unique PID',
+                                         'URL Manipulation - Multiple Tries	URL Manipulation - Multiple Tries': 'URL manipulation',
+                                         'ZIPCODES': 'zips'}  # declare the values from the main term reason column in a list : to a convinient names
+
+            self.get_data()
+
+        except FileNotFoundError as fe:
+            print(f'File not found : {fe}')
+            print(traceback.print_exc())
+            exit()
+        except Exception as e :
+            print(f'An error occurred : {e}')
+            print(traceback.print_exc())
+            exit()
+
+
+
+    def get_data(self): #collecting data from local file based on needed data map initiated
+
+        try:
+            self.data_column_values = {}  # initiate empty list
+            self.local_raw_path = r"C:\Users\prabi\OneDrive\Desktop\test_fil.xlsx"  # path for excel file
+
+            for key, value in self.data_column_map.items():
+                setattr(self, key, self.data_file.get(value))  # set values based on mapped values from local data file
+                self.data_column_values_key = getattr(self, key)  # get values based on the set attributes
+                self.data_column_values[
+                    key] = self.data_column_values_key.tolist()  # pack retrieved mapped values in a list
+
+            self.local_data = pd.DataFrame(self.data_column_values)  # load into pandas dataframe
+
+            with  pd.ExcelWriter(self.local_raw_path, engine='xlsxwriter') as writer:  # write it to excel
+                self.local_data.to_excel(writer, index=None)
+
+                print('\nExcel created')
+
+        except FileNotFoundError as fe:
+            print(f'File not found : {fe}')
+            print(traceback.print_exc())
+            exit()
+        except Exception as e:
+            print(f'An error occurred : {e}')
+            print(traceback.print_exc())
+            exit()
+
+
+
+class VendorReport(DataInitiate):  #filter data based on supplier name and create a report while replacing with proper term names
+
+
+    def vendor_filter(self):
+
+        try:
+            self.merge_excel_path = r"C:\Users\prabi\OneDrive\Desktop\project excels\termreport.xlsx"  # merge file sheet excel path
+            unique_vendor_name = self.local_data['supplier'].astype(str).unique()  # list of unique supplier names
+
+            vendor_name_ignore = r'Noahsupplier|FEsupplier|Sample network|PLsupplier|PSSupplier|FusionCash|nan'  # declare suppliers we dont want to in...
+            # ...our term report
+            filtered_vendor_name = [vendor for vendor in unique_vendor_name if not re.search(vendor_name_ignore, vendor)]
+
+            # filtered_vendor_name = unique_vendor_name[~pd.Series(unique_vendor_name).str.contains(vendor_name_ignore, na = False)]
+
+            for i, j in enumerate(filtered_vendor_name, 1):
+                print(
+                    f'{i}:{j}')  # enlist the final list of supplier name with index so we can selct the supplier number
+                                         # ...to select the supplier wee need the term report for
+
+            while True:
+                try:
+                    column_select = int(input('\nSelect the vendor from the list ?')) - 1  # select the supplier index you need the term report for
+                    if 0 <= column_select < len(filtered_vendor_name):
+                        break
+                    print('\nYour input is out of range, check the sl no. of each suppler and try again ')
+                except Exception as e :
+                    print(f'Integers allowed only {e}')
+
+
+
+
+
+            filter_set = [filtered_vendor_name[column_select]]  # name of the supplier you see;cted from the valid list after getting rid  of ignored names
+            print()
+            print(f'\nYou selected - {filter_set}')
+            time.sleep(1)
+            self.vendor_data = pd.DataFrame(self.local_data[self.local_data['supplier'].isin(filter_set)])  # pack all column of the selected supplier
+
+            self.vendor_data_terms = self.vendor_data['term_reason'].unique()  # unique terminate reasons value
+
+            print(self.vendor_data_terms)
+
+            for key, value in self.column_value_replace.items():  # calling from the term column values from Initiate class
+
+                if key in self.vendor_data_terms:
+                    self.vendor_data['term_reason'] = self.vendor_data['term_reason'].replace(key,value)  # replace term reason....
+                                                                         # ....column values with value in a list in self.column_value_replace
+
+            # below steps for better readability of term points in a term report
+
+            mask_red = self.vendor_data['term_reason'].astype(str).str.contains('RED_HERRING')  # any cell which has any extended suffix/prefix in red-herring
+            self.vendor_data.loc[mask_red, 'term_reason'] = 'Red_herring'  # replaced by just red_herring
+
+            mask_duplicate = self.vendor_data['term_reason'].astype(str).str.contains('Duplicated|Duplicate')  # any cell having word Duplicate
+            self.vendor_data.loc[mask_duplicate, ['term_reason']] = 'Duplicated'  # replaced by only duplicate
+
+            mask_ignore = self.vendor_data['term_reason'].astype(str).str.contains('HTTP_REFERER|Job NA')  # any cell with irrelevant string
+            self.vendor_data.loc[mask_ignore, ['term_reason']] = np.nan  # replaced by nan
+
+        except FileNotFoundError as fe:
+            print(f'File not found : {fe}')
+            exit()
+        except Exception as e:
+            print(f'An error occurred : {e}  ')
+            print(traceback.print_exc())
+            exit()
+
+        with pd.ExcelWriter(path= self.merge_excel_path, engine= 'xlsxwriter') as writer :  #write the above panda frame of term report in excel
+            self.vendor_data.to_excel(writer, index= False)
+
+        print('\nterm report created')
+
+
+
+
+
+class Pivot(VendorReport):  #create a pivot table based on term report
+    def pivot_tab(self):
+        self.vendor_filter()
+
+        #pivot table based on term_reason, country as column and aggfunc for szie not counts
+
+        try:
+            Pivot = pd.pivot_table(data=self.vendor_data, index='term_reason', columns='Country', aggfunc='size', fill_value=0)
+
+            print(Pivot)
+
+            with pd.ExcelWriter(path=self.merge_excel_path, engine='xlsxwriter') as writer:
+                Pivot.to_excel(writer, sheet_name='new_sheet_pivot')
+
+            print('\npivot created')
+
+        except Exception as e:
+            print(f'An error occurred : {e}')
+            print(traceback.print_exc())
+            exit()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+file = r"D:\Files\term_report.csv"
+data = Pivot(file)
+data.pivot_tab()
+
